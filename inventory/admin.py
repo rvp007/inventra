@@ -2,6 +2,12 @@ from django.contrib import admin
 from import_export.admin import ImportExportModelAdmin
 from .models import UserProfile, Lab, Asset, Transaction, Reservation, MaintenanceLog
 
+
+admin.site.site_header = "INVENTRA — Smart Campus Lab & Equipment Administration"
+admin.site.site_title = "INVENTRA Admin Portal"
+admin.site.index_title = "Welcome to INVENTRA Inventory Management"
+
+
 @admin.register(UserProfile)
 class UserProfileAdmin(ImportExportModelAdmin):
     list_display = ('user', 'role', 'department', 'penalty_flags')
