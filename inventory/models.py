@@ -21,17 +21,25 @@ class UserProfile(models.Model):
     penalty_flags = models.PositiveIntegerField(default=0)
 
     def __str__(self):
-        return f"{self.user.username} ({self.get_role_display()})"
+        role_label = dict(self.ROLE_CHOICES).get(self.role, self.role)
+        return f"{self.user.username} ({role_label})"
 
 
 # 2. LABS TABLE (Supports multiple labs & departments - Scalability NFR)
 class Lab(models.Model):
     lab_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     lab_name = models.CharField(max_length=100, unique=True)
+    lab_code = models.CharField(max_length=15, unique=True, default='GEN', help_text="Short prefix for IDs, e.g., CS, ELEC, CHEM, MECH")
     in_charge = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='managed_labs')
 
+    def save(self, *args, **kwargs):
+        if not self.lab_code or self.lab_code == 'GEN':
+            clean = ''.join(e for e in self.lab_name if e.isalnum()).upper()
+            self.lab_code = clean[:6]
+        super().save(*args, **kwargs)
+
     def __str__(self):
-        return self.lab_name
+        return f"{self.lab_name} ({self.lab_code})"
 
 
 # 3. ASSETS / INVENTORY TABLE (FR1, FR2, FR3, FR10, FR17)
@@ -51,9 +59,10 @@ class Asset(models.Model):
     ]
 
     asset_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    name = models.CharField(max_length=150)
-    category = models.CharField(max_length=100, help_text="e.g., Microcontroller, Glassware, Heavy Machinery")
-    serial_number = models.CharField(max_length=100, unique=True, help_text="Unique manufacturer serial no. (TC6)")
+    asset_tag = models.CharField(max_length=40, unique=True, blank=True, help_text="Auto-generated ID based on Lab (e.g., INV-CSUB44-0001)")
+    name = models.CharField(max_length=255)
+    category = models.CharField(max_length=100, default='General Equipment')
+    serial_number = models.CharField(max_length=150, unique=True, help_text="Unique manufacturer serial no. or auto-assigned tag (TC6)")
     lab = models.ForeignKey(Lab, on_delete=models.CASCADE, related_name='assets')
 
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='AVAILABLE')
@@ -71,25 +80,44 @@ class Asset(models.Model):
         ]
 
     def save(self, *args, **kwargs):
-        # Automatically move Damaged or Unusable items to Under Maintenance (FR8, TC15)
+        # 1. Auto-generate Lab-Based Unique ID (e.g., INV-CSUB44-0001)
+        if not self.asset_tag and self.lab:
+            prefix = f"INV-{self.lab.lab_code.upper()}-"
+            last_asset = Asset.objects.filter(asset_tag__startswith=prefix).order_by('-asset_tag').first()
+            if last_asset:
+                try:
+                    last_num = int(last_asset.asset_tag.split('-')[-1])
+                    next_num = last_num + 1
+                except ValueError:
+                    next_num = Asset.objects.filter(lab=self.lab).count() + 1
+            else:
+                next_num = 1
+            self.asset_tag = f"{prefix}{next_num:04d}"
+
+        # 2. Fallback serial_number to asset_tag if missing in dataset
+        if not self.serial_number or str(self.serial_number).strip().lower() in ['nan', 'none', 'na', 'n/a', '-', '']:
+            self.serial_number = self.asset_tag
+
+        # 3. Automatically move Damaged or Unusable items to Under Maintenance (FR8, TC15)
         if self.condition in ['DAMAGED', 'UNUSABLE']:
             self.status = 'MAINTENANCE'
 
-        # Automatically generate QR code on first save (FR2)
+        # 4. Automatically generate QR code on first save (FR2)
         if not self.qr_code:
             qr = qrcode.QRCode(version=1, box_size=10, border=4)
-            qr.add_data(f"SCALE-ASSET:{self.asset_id}|{self.serial_number}")
+            qr.add_data(f"INVENTRA|{self.asset_tag}|{self.name}|{self.lab.lab_name}")
             qr.make(fit=True)
             img = qr.make_image(fill_color="black", back_color="white")
             buffer = BytesIO()
-            img.save(buffer, format='PNG')
-            file_name = f"qr_{self.serial_number}.png"
+            img.save(buffer)  # Saves as PNG by default without triggering Pylance reportCallIssue
+            file_name = f"qr_{self.asset_tag}.png"
             self.qr_code.save(file_name, File(buffer), save=False)
 
         super().save(*args, **kwargs)
 
     def __str__(self):
-        return f"{self.name} ({self.serial_number}) - {self.get_status_display()}"
+        status_label = dict(self.STATUS_CHOICES).get(self.status, self.status)
+        return f"[{self.asset_tag}] {self.name} ({status_label})"
 
 
 # 4. TRANSACTIONS / AUDIT TRAIL TABLE (FR5, FR6, FR7, FR8, FR11)
