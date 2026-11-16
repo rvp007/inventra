@@ -2,11 +2,10 @@ from django.contrib import admin
 from import_export.admin import ImportExportModelAdmin
 from .models import UserProfile, Lab, Asset, Transaction, Reservation, MaintenanceLog
 
-
+# Rebrand the top bar to INVENTRA
 admin.site.site_header = "INVENTRA — Smart Campus Lab & Equipment Administration"
 admin.site.site_title = "INVENTRA Admin Portal"
 admin.site.index_title = "Welcome to INVENTRA Inventory Management"
-
 
 @admin.register(UserProfile)
 class UserProfileAdmin(ImportExportModelAdmin):
@@ -16,14 +15,14 @@ class UserProfileAdmin(ImportExportModelAdmin):
 
 @admin.register(Lab)
 class LabAdmin(ImportExportModelAdmin):
-    list_display = ('lab_name', 'in_charge', 'lab_id')
-    search_fields = ('lab_name',)
+    list_display = ('lab_name', 'lab_code', 'in_charge', 'lab_id')
+    search_fields = ('lab_name', 'lab_code')
 
 @admin.register(Asset)
 class AssetAdmin(ImportExportModelAdmin):
-    list_display = ('name', 'serial_number', 'category', 'lab', 'status', 'condition', 'stock_quantity')
-    list_filter = ('status', 'condition', 'lab', 'category')
-    search_fields = ('name', 'serial_number', 'category')
+    list_display = ('asset_tag', 'name', 'serial_number', 'category', 'lab', 'status', 'condition', 'stock_quantity')
+    list_filter = ('lab', 'status', 'condition', 'category')
+    search_fields = ('asset_tag', 'name', 'serial_number', 'category')
 
 @admin.register(Transaction)
 class TransactionAdmin(ImportExportModelAdmin):
