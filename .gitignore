@@ -1,14 +1,9 @@
-venv/
-.env
-__pycache__/
-*.pyc
-media/
-db.sqlite3
-tempCodeRunnerFile.py
-.env
+﻿.env
 venv/
 __pycache__/
 *.pyc
 db.sqlite3
 staticfiles/
 media/
+tempCodeRunnerFile.py
+codebase_review.txt

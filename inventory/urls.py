@@ -17,7 +17,8 @@ urlpatterns = [
     # Dashboard, Universal Search & QR Lookup
     path('api/dashboard/', views.api_dashboard, name='api_dashboard'),
     path('api/search/', views.api_universal_search, name='api_universal_search'),
-    path('api/qr/<str:asset_tag>/', views.api_qr_lookup, name='api_qr_lookup'),
+    path('api/qr/<str:asset_tag>/image/', views.api_qr_image, name='api_qr_image'),
+    path('api/qr/<str:asset_tag>/image/', views.api_qr_image, name='api_qr_image'),
 
     # Lab CRUD, Asset CRUD & Maintenance
     path('api/labs/save/', views.api_save_lab, name='api_save_lab'),

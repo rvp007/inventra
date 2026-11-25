@@ -1,16 +1,19 @@
 """
 INVENTRA JSON REST API & Role-Based Views
 Enforces Lab-Scoped Assistant RBAC, Live Institutional Email OTP,
-Lab/Asset CRUD, Universal Search, PR Template Exports, and Multi-Role Sync.
+Lab/Asset CRUD, Universal Search, Dynamic QR Generation, PR Template Exports, and Multi-Role Sync.
 """
 import json
 import os
 from functools import wraps
+from io import BytesIO
+
+import qrcode
 from django.conf import settings
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError, PermissionDenied
-from django.db.models import F
+from django.db.models import F, Count
 from django.http import JsonResponse, HttpResponse
 from django.shortcuts import render, get_object_or_404
 from django.utils import timezone
@@ -59,7 +62,7 @@ def api_login_required(roles=None):
             if roles and role not in roles:
                 return JsonResponse(
                     {'error': f'Access denied. Required role: {roles}, your role: {role}.'},
-                    status=403
+                    status=403,
                 )
             return view_func(request, *args, **kwargs)
         return wrapper
@@ -227,7 +230,7 @@ def api_me(request):
 
 
 # ==============================================================================
-# ROLE & LAB-SCOPED DASHBOARD, UNIVERSAL SEARCH & QR LOOKUP
+# ROLE & LAB-SCOPED DASHBOARD, UNIVERSAL SEARCH & QR LOOKUP/IMAGE
 # ==============================================================================
 
 @require_http_methods(["GET"])
@@ -239,17 +242,18 @@ def api_dashboard(request):
     assigned_lab = profile.assigned_lab
     now = timezone.now()
 
-    labs = []
-    for lab in Lab.objects.all().order_by('lab_name'):
-        labs.append({
+    labs = [
+        {
             'lab_id': str(lab.lab_id),
             'lab_name': lab.lab_name,
             'lab_code': lab.lab_code,
             'lab_type': lab.lab_type,
             'location': lab.location,
             'instructor_name': lab.instructor_name,
-            'asset_count': Asset.objects.filter(lab=lab).count(),
-        })
+            'asset_count': lab.asset_count,
+        }
+        for lab in Lab.objects.annotate(asset_count=Count('assets')).order_by('lab_name')
+    ]
 
     base_assets = Asset.objects.select_related('lab').all()
     if role == 'ASSISTANT' and assigned_lab is not None:
@@ -383,10 +387,22 @@ def api_qr_lookup(request, asset_tag):
         'status': asset.status,
         'condition': asset.condition,
         'stock_quantity': asset.stock_quantity,
-        'qr_code_url': asset.qr_code.url if asset.qr_code else None,
+        'qr_code_url': f'/api/qr/{asset.asset_tag}/image/',
         'extra_metadata': asset.extra_metadata,
         'current_borrower': active_tx.borrower.username if active_tx else None,
     })
+
+
+@require_http_methods(["GET"])
+def api_qr_image(request, asset_tag):
+    asset = get_object_or_404(Asset.objects.select_related('lab'), asset_tag=asset_tag)
+    qr = qrcode.QRCode(version=1, box_size=8, border=3)
+    qr.add_data(f"INVENTRA|{asset.asset_tag}|{asset.name}|{asset.lab.lab_name}")
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    buf = BytesIO()
+    img.save(buf, format='PNG')
+    return HttpResponse(buf.getvalue(), content_type='image/png')
 
 
 # ==============================================================================
