@@ -1,8 +1,8 @@
 """
 INVENTRA Core Relational Schema
-Maintains normalized tables for RBAC, College Email OTP registration,
-Labs, Assets (with schema-agnostic JSONB metadata), Transactions,
-Time-Slot Reservations, and Maintenance Logs.
+Supports 6 Lab Types, Lab-Scoped RBAC (UserProfile.assigned_lab),
+Institutional Email OTP, Auto QR/Asset Tagging, JSONB Metadata,
+Atomic Transactions, Strict Time-Slot Reservations, and Maintenance Logs.
 """
 import uuid
 import secrets
@@ -17,19 +17,62 @@ from django.db.models import Q, CheckConstraint
 from django.utils import timezone
 
 
+class Lab(models.Model):
+    """Physical campus laboratory room or store."""
+    LAB_TYPE_CHOICES = [
+        ('COMPUTER_SCIENCE', 'Computer Science Lab'),
+        ('ELECTRONICS', 'Digital & Analog Electronics Lab'),
+        ('CHEMISTRY', 'Chemistry Lab'),
+        ('PHYSICS', 'Physics Lab'),
+        ('MECHANICAL_MANUFACTURING', 'Mechanical & Manufacturing Lab'),
+        ('IDEATION_DESIGN', 'Ideation & Design Thinking Lab'),
+    ]
+
+    lab_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    lab_name = models.CharField(max_length=120, unique=True)
+    lab_code = models.CharField(
+        max_length=15, unique=True, default='GEN',
+        help_text="Short prefix for unique asset tags, e.g., CSUB44, ELEC, PHYS, CHEM"
+    )
+    lab_type = models.CharField(max_length=30, choices=LAB_TYPE_CHOICES, default='COMPUTER_SCIENCE')
+    location = models.CharField(max_length=100, blank=True, default='')
+    instructor_name = models.CharField(max_length=150, blank=True, default='')
+    in_charge = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True, related_name='managed_labs'
+    )
+
+    def save(self, *args, **kwargs):
+        if not self.lab_code or self.lab_code == 'GEN':
+            clean = ''.join(e for e in self.lab_name if e.isalnum()).upper()
+            self.lab_code = clean[:10] or 'GEN'
+        else:
+            self.lab_code = ''.join(e for e in self.lab_code if e.isalnum()).upper()[:15]
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.lab_name} ({self.lab_code})"
+
+
 class EmailOTP(models.Model):
     """Stores 6-digit time-limited OTPs for institutional email registration."""
     email = models.EmailField(db_index=True)
     code = models.CharField(max_length=6)
     role = models.CharField(max_length=20, default='STUDENT')
     department = models.CharField(max_length=100, blank=True, default='')
+    assigned_lab = models.ForeignKey(Lab, on_delete=models.SET_NULL, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField()
     is_used = models.BooleanField(default=False)
 
     @classmethod
-    def generate(cls, email: str, role: str = 'STUDENT', department: str = '', ttl_minutes: int = 10):
-        # Invalidate older unused OTPs for this email
+    def generate(
+        cls,
+        email: str,
+        role: str = 'STUDENT',
+        department: str = '',
+        assigned_lab=None,
+        ttl_minutes: int = 10,
+    ):
         cls.objects.filter(email=email.lower(), is_used=False).update(is_used=True)
         otp_code = f"{secrets.randbelow(900000) + 100000:06d}"
         return cls.objects.create(
@@ -37,6 +80,7 @@ class EmailOTP(models.Model):
             code=otp_code,
             role=role,
             department=department,
+            assigned_lab=assigned_lab,
             expires_at=timezone.now() + timedelta(minutes=ttl_minutes),
         )
 
@@ -48,7 +92,7 @@ class EmailOTP(models.Model):
 
 
 class UserProfile(models.Model):
-    """Role-Based Access Control (RBAC) profile linked 1-to-1 with Django User."""
+    """Role-Based Access Control (RBAC) profile with strict Lab Assistant scoping."""
     ROLE_CHOICES = [
         ('STUDENT', 'Student / Researcher'),
         ('FACULTY', 'Faculty'),
@@ -58,34 +102,17 @@ class UserProfile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='profile')
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='STUDENT')
     department = models.CharField(max_length=100, blank=True, default='')
+    assigned_lab = models.ForeignKey(
+        Lab, on_delete=models.SET_NULL, null=True, blank=True, related_name='assigned_assistants',
+        help_text="Strict lab scope for Lab Assistants"
+    )
     is_email_verified = models.BooleanField(default=False)
     penalty_flags = models.PositiveIntegerField(default=0)
 
     def __str__(self):
         role_label = dict(self.ROLE_CHOICES).get(self.role, self.role)
-        return f"{self.user.username} ({role_label})"
-
-
-class Lab(models.Model):
-    """Physical campus laboratory room or store."""
-    lab_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    lab_name = models.CharField(max_length=100, unique=True)
-    lab_code = models.CharField(
-        max_length=15, unique=True, default='GEN',
-        help_text="Short prefix for unique asset tags, e.g., CSUB44, ELEC, PHYS, CHEM"
-    )
-    in_charge = models.ForeignKey(
-        User, on_delete=models.SET_NULL, null=True, blank=True, related_name='managed_labs'
-    )
-
-    def save(self, *args, **kwargs):
-        if not self.lab_code or self.lab_code == 'GEN':
-            clean = ''.join(e for e in self.lab_name if e.isalnum()).upper()
-            self.lab_code = clean[:8] or 'GEN'
-        super().save(*args, **kwargs)
-
-    def __str__(self):
-        return f"{self.lab_name} ({self.lab_code})"
+        lab_str = f" @ {self.assigned_lab.lab_code}" if self.assigned_lab else ""
+        return f"{self.user.username} ({role_label}{lab_str})"
 
 
 class Asset(models.Model):
@@ -125,8 +152,6 @@ class Asset(models.Model):
     low_stock_threshold = models.PositiveIntegerField(default=2)
     purchase_date = models.DateField(null=True, blank=True)
     qr_code = models.ImageField(upload_to='qr_codes/', blank=True, null=True)
-
-    # Preserves arbitrary extra columns from ANY uploaded file format (JSONB in Supabase)
     extra_metadata = models.JSONField(default=dict, blank=True)
 
     class Meta:
@@ -135,7 +160,6 @@ class Asset(models.Model):
         ]
 
     def save(self, *args, **kwargs):
-        # 1. Auto-generate sequential Lab-prefixed tag (e.g., INV-PHYS-0001)
         if not self.asset_tag and self.lab:
             prefix = f"INV-{self.lab.lab_code.upper()}-"
             last_asset = Asset.objects.filter(asset_tag__startswith=prefix).order_by('-asset_tag').first()
@@ -147,15 +171,12 @@ class Asset(models.Model):
                     next_num = Asset.objects.filter(lab=self.lab).count() + 1
             self.asset_tag = f"{prefix}{next_num:04d}"
 
-        # 2. Ensure serial_number fallback
         if not self.serial_number or str(self.serial_number).strip().lower() in ['nan', 'none', 'na', 'n/a', '-', '']:
             self.serial_number = self.asset_tag
 
-        # 3. Keep total_quantity at least equal to stock_quantity
         if self.total_quantity < self.stock_quantity:
             self.total_quantity = self.stock_quantity
 
-        # 4. Autonomous condition -> status state transition
         if self.condition in ['DAMAGED', 'UNUSABLE']:
             self.status = 'MAINTENANCE'
         elif self.stock_quantity == 0 and self.status == 'AVAILABLE':
@@ -163,7 +184,6 @@ class Asset(models.Model):
         elif self.stock_quantity > 0 and self.status == 'ISSUED':
             self.status = 'AVAILABLE'
 
-        # 5. Auto-generate PNG QR Code
         if not self.qr_code:
             qr = qrcode.QRCode(version=1, box_size=10, border=4)
             qr.add_data(f"INVENTRA|{self.asset_tag}|{self.name}|{self.lab.lab_name}")

@@ -1,9 +1,14 @@
 """
-INVENTRA Autonomous Domain Services
-All state mutations execute inside atomic PostgreSQL transactions with row-level locks.
+INVENTRA Autonomous Domain Services (inventory/services.py)
+Enforces strict lab-scoped RBAC for Lab Assistants, live institutional email OTP,
+row-locked borrow/return workflows, strict machine reservations, and Lab/Asset CRUD.
 """
 import os
 from datetime import timedelta
+from typing import Any
+import json
+import urllib.request
+
 from django.conf import settings
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError, PermissionDenied
@@ -11,29 +16,68 @@ from django.core.mail import send_mail
 from django.db import transaction
 from django.db.models import Q, F
 from django.utils import timezone
-from typing import Any
 
 from .models import EmailOTP, UserProfile, Lab, Asset, Transaction, Reservation, MaintenanceLog
 
-# Configurable business policy constants
 ALLOWED_EMAIL_DOMAINS = [
     d.strip().lower()
     for d in os.getenv('ALLOWED_EMAIL_DOMAINS', 'chanakyauniversity.edu.in').split(',')
     if d.strip()
 ]
-RESERVATION_MIN_ADVANCE_MINUTES = 60    # Must book at least 1 hour prior
-RESERVATION_MAX_ADVANCE_MINUTES = 120   # Cannot book more than 2 hours ahead (prevents overflow)
-RESERVATION_MAX_DURATION_MINUTES = 120  # Max 2 hours per machine slot
-RESERVATION_EXPIRY_MINUTES = 30         # Auto-expire if uncollected 30 mins after start_time
-MIN_REASON_LENGTH = 5                   # Minimum characters for mandatory borrow reason
+RESERVATION_MIN_ADVANCE_MINUTES = 60
+RESERVATION_MAX_ADVANCE_MINUTES = 120
+RESERVATION_MAX_DURATION_MINUTES = 120
+RESERVATION_EXPIRY_MINUTES = 30
+MIN_REASON_LENGTH = 5
 
 
 # ==============================================================================
-# 1. COLLEGE EMAIL OTP REGISTRATION & RBAC
+# 1. PROFILE, ROLE & STRICT LAB-SCOPE GUARD
+# ==============================================================================
+
+def get_user_profile(user: Any) -> UserProfile:
+    profile, _ = UserProfile.objects.select_related('assigned_lab').get_or_create(
+        user=user,
+        defaults={
+            'role': 'ADMIN' if getattr(user, 'is_superuser', False) else 'STUDENT',
+            'is_email_verified': getattr(user, 'is_superuser', False),
+        },
+    )
+    return profile
+
+
+def get_user_role(user: Any) -> str:
+    return get_user_profile(user).role
+
+
+def assert_lab_access(staff_user: Any, target_lab: Lab) -> None:
+    """
+    CRITICAL RBAC GUARD:
+    - ADMIN can manage all laboratories.
+    - ASSISTANT is strictly restricted to their assigned_lab only.
+    """
+    profile = get_user_profile(staff_user)
+    if profile.role == 'ADMIN':
+        return
+    if profile.role == 'ASSISTANT':
+        if profile.assigned_lab is None:
+            raise PermissionDenied(
+                "Lab Scope Violation: Your Lab Assistant account has no assigned lab. Contact Admin."
+            )
+        if profile.assigned_lab.lab_id != target_lab.lab_id:
+            raise PermissionDenied(
+                f"Lab Scope Violation: You are assigned to '{profile.assigned_lab.lab_name}' "
+                f"and cannot manage assets or requests belonging to '{target_lab.lab_name}'."
+            )
+        return
+    raise PermissionDenied("Insufficient permissions for laboratory management actions.")
+
+
+# ==============================================================================
+# 2. LIVE COLLEGE EMAIL OTP REGISTRATION
 # ==============================================================================
 
 def validate_college_email(email: str) -> str:
-    """Ensures every user registers with an institutional college email address."""
     email = (email or '').strip().lower()
     if '@' not in email:
         raise ValidationError("Please enter a valid college email address.")
@@ -44,41 +88,117 @@ def validate_college_email(email: str) -> str:
     return email
 
 
-def request_registration_otp(email: str, role: str = 'STUDENT', department: str = '') -> EmailOTP:
-    """Validates college email, generates a 6-digit OTP, and dispatches it via email."""
+def request_registration_otp(
+    email: str,
+    role: str = 'STUDENT',
+    department: str = '',
+    assigned_lab_id: str = '',
+) -> EmailOTP:
     clean_email = validate_college_email(email)
-    valid_roles = {r[0] for r in UserProfile.ROLE_CHOICES}
+    valid_roles = {'STUDENT', 'FACULTY', 'ASSISTANT'}
     if role not in valid_roles:
-        raise ValidationError(f"Invalid role '{role}'. Must be one of {sorted(valid_roles)}.")
+        raise ValidationError(f"Invalid role '{role}'. Must be STUDENT, FACULTY, or ASSISTANT.")
 
     if User.objects.filter(email__iexact=clean_email).exists():
-        raise ValidationError("An account with this college email already exists. Please log in.")
+        raise ValidationError("An account with this college email already exists. Please sign in.")
 
-    otp = EmailOTP.generate(email=clean_email, role=role, department=department)
+    assigned_lab = None
+    if role == 'ASSISTANT':
+        if not assigned_lab_id:
+            raise ValidationError("Lab Assistants must select their assigned laboratory during registration.")
+        try:
+            assigned_lab = Lab.objects.get(lab_id=assigned_lab_id)
+        except Lab.DoesNotExist:
+            raise ValidationError("Selected assigned laboratory does not exist.")
 
-    send_mail(
-        subject="INVENTRA — Your Campus Registration OTP",
-        message=(
-            f"Welcome to INVENTRA (Chanakya University Smart Lab Inventory).\n\n"
-            f"Your 6-digit verification code is: {otp.code}\n"
-            f"This code expires in 10 minutes.\n"
-        ),
-        from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', 'noreply@inventra.chanakyauniversity.edu.in'),
-        recipient_list=[clean_email],
-        fail_silently=False,
+    otp = EmailOTP.generate(
+        email=clean_email,
+        role=role,
+        department=department,
+        assigned_lab=assigned_lab,
     )
+
+    from_addr = getattr(settings, 'DEFAULT_FROM_EMAIL', 'noreply@inventra.chanakyauniversity.edu.in')
+    lab_line_text = f"Assigned Lab: {assigned_lab.lab_name}\n" if assigned_lab else ""
+    lab_line_html = (
+        f'<p style="font-size:13px;"><strong>Assigned Lab:</strong> {assigned_lab.lab_name}</p>'
+        if assigned_lab
+        else ""
+    )
+
+    plain_body = (
+        f"Welcome to INVENTRA (Chanakya University Smart Lab Inventory).\n\n"
+        f"Your 6-digit verification code is: {otp.code}\n"
+        f"Role requested: {role}\n"
+        f"{lab_line_text}"
+        f"This OTP expires in 10 minutes.\n"
+    )
+
+    html_body = (
+        '<div style="font-family:Arial,sans-serif;max-width:480px;margin:auto;'
+        'border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;">'
+        '<div style="background:#153b5b;color:#ffffff;padding:18px 24px;">'
+        '<h2 style="margin:0;font-size:18px;">INVENTRA &middot; Chanakya University</h2>'
+        '<p style="margin:4px 0 0;font-size:12px;color:#cbd5e1;">Smart Campus Lab Inventory Verification</p>'
+        '</div>'
+        '<div style="padding:24px;color:#1e293b;">'
+        f'<p style="margin-top:0;">Use the 6-digit verification code below to complete your '
+        f'<strong>{role}</strong> account registration:</p>'
+        '<div style="font-size:32px;font-weight:800;letter-spacing:8px;text-align:center;'
+        f'background:#f1f6fb;color:#153b5b;padding:16px;border-radius:8px;margin:18px 0;">{otp.code}</div>'
+        f'{lab_line_html}'
+        '<p style="font-size:12px;color:#64748b;margin-bottom:0;">'
+        'This code expires in 10 minutes. Do not share it with anyone.</p>'
+        '</div></div>'
+    )
+
+    brevo_key = (os.getenv('BREVO_API_KEY') or '').strip()
+    brevo_sender = (os.getenv('BREVO_SENDER_EMAIL') or os.getenv('EMAIL_HOST_USER') or '').strip()
+
+    if brevo_key and brevo_sender:
+        payload = json.dumps({
+            'sender': {'name': 'INVENTRA · Chanakya University', 'email': brevo_sender},
+            'to': [{'email': clean_email}],
+            'subject': 'INVENTRA — Your Chanakya University Verification OTP',
+            'htmlContent': html_body,
+            'textContent': plain_body,
+        }).encode('utf-8')
+        req = urllib.request.Request(
+            'https://api.brevo.com/v3/smtp/email',
+            data=payload,
+            headers={
+                'accept': 'application/json',
+                'api-key': brevo_key,
+                'content-type': 'application/json',
+            },
+            method='POST',
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            if resp.status >= 400:
+                raise RuntimeError(f"Email API rejected request ({resp.status}).")
+    else:
+        send_mail(
+            subject="INVENTRA — Your Chanakya University Verification OTP",
+            message=plain_body,
+            from_email=from_addr,
+            recipient_list=[clean_email],
+            html_message=html_body,
+            fail_silently=False,
+        )
     return otp
 
 
 @transaction.atomic
 def verify_otp_and_register(email: str, code: str, password: str, full_name: str = '') -> User:
-    """Verifies OTP and atomically creates User + verified UserProfile."""
     clean_email = validate_college_email(email)
     if not password or len(password) < 8:
         raise ValidationError("Password must be at least 8 characters long.")
 
+    # Do NOT chain select_related('assigned_lab') here; PostgreSQL rejects FOR UPDATE on nullable outer joins
     otp = EmailOTP.objects.select_for_update().filter(
-        email=clean_email, code=str(code).strip(), is_used=False
+        email=clean_email,
+        code=str(code).strip(),
+        is_used=False,
     ).order_by('-created_at').first()
 
     if not otp or not otp.is_valid():
@@ -110,50 +230,37 @@ def verify_otp_and_register(email: str, code: str, password: str, full_name: str
         defaults={
             'role': otp.role,
             'department': otp.department,
+            'assigned_lab': otp.assigned_lab,
             'is_email_verified': True,
-        }
+        },
     )
     return user
 
 
-def get_user_profile(user: Any) -> UserProfile:
-    """Safely fetches or creates the UserProfile without triggering Pylance reverse-attribute warnings."""
-    profile, _ = UserProfile.objects.get_or_create(
-        user=user,
-        defaults={
-            'role': 'ADMIN' if getattr(user, 'is_superuser', False) else 'STUDENT',
-            'is_email_verified': getattr(user, 'is_superuser', False),
-        }
-    )
-    return profile
-
-
-def get_user_role(user: Any) -> str:
-    return get_user_profile(user).role
-
-
 # ==============================================================================
-# 2. UNIVERSAL CROSS-LAB LIVE SEARCH
+# 3. UNIVERSAL CROSS-LAB LIVE SEARCH
 # ==============================================================================
 
-def universal_asset_search(query: str = '', lab_id: str = '', status: str = '', category: str = '', asset_type: str = ''):
-    """
-    Searches across ALL campus labs simultaneously.
-    If an item (e.g., 'Oscilloscope') exists in both Physics and Chemistry labs,
-    both entries are returned with their respective lab details, stock, status, and extra_metadata.
-    """
+def universal_asset_search(
+    query: str = '',
+    lab_id: str = '',
+    status: str = '',
+    category: str = '',
+    asset_type: str = '',
+):
     expire_stale_reservations()
 
     qs = Asset.objects.select_related('lab').all()
     if query:
         q = query.strip()
         qs = qs.filter(
-            Q(name__icontains=q) |
-            Q(asset_tag__icontains=q) |
-            Q(serial_number__icontains=q) |
-            Q(category__icontains=q) |
-            Q(lab__lab_name__icontains=q) |
-            Q(lab__lab_code__icontains=q)
+            Q(name__icontains=q)
+            | Q(asset_tag__icontains=q)
+            | Q(serial_number__icontains=q)
+            | Q(category__icontains=q)
+            | Q(lab__lab_name__icontains=q)
+            | Q(lab__lab_code__icontains=q)
+            | Q(lab__location__icontains=q)
         )
     if lab_id:
         qs = qs.filter(lab__lab_id=lab_id)
@@ -165,7 +272,7 @@ def universal_asset_search(query: str = '', lab_id: str = '', status: str = '', 
         qs = qs.filter(asset_type=asset_type)
 
     results = []
-    for asset in qs.order_by('name', 'lab__lab_name')[:200]:
+    for asset in qs.order_by('name', 'lab__lab_name')[:250]:
         results.append({
             'asset_id': str(asset.asset_id),
             'asset_tag': asset.asset_tag,
@@ -177,34 +284,34 @@ def universal_asset_search(query: str = '', lab_id: str = '', status: str = '', 
                 'lab_id': str(asset.lab.lab_id),
                 'lab_name': asset.lab.lab_name,
                 'lab_code': asset.lab.lab_code,
+                'lab_type': asset.lab.lab_type,
+                'location': asset.lab.location,
             },
             'status': asset.status,
             'condition': asset.condition,
             'stock_quantity': asset.stock_quantity,
             'total_quantity': asset.total_quantity,
             'is_low_stock': asset.is_low_stock,
-            'qr_code_url': asset.qr_code.url if asset.qr_code else None,
+            'qr_code_url': f'/api/qr/{asset.asset_tag}/image/',
             'extra_metadata': asset.extra_metadata,
         })
     return results
 
 
 # ==============================================================================
-# 3. AUTONOMOUS BORROW / APPROVAL / RETURN ENGINE (MANDATORY REASON)
+# 4. AUTONOMOUS BORROW / APPROVAL / RETURN ENGINE (LAB-SCOPED)
 # ==============================================================================
 
 @transaction.atomic
 def create_borrow_request(user: Any, asset_id, quantity: int = 1, borrow_reason: str = '') -> Transaction:
-    """Submits a borrow request. Rejects empty/vague reasons immediately."""
     expire_stale_reservations()
-
     clean_reason = (borrow_reason or '').strip()
     if len(clean_reason) < MIN_REASON_LENGTH:
         raise ValidationError(
             f"A clear reason for borrowing is mandatory (at least {MIN_REASON_LENGTH} characters)."
         )
 
-    asset = Asset.objects.select_for_update().get(asset_id=asset_id)
+    asset = Asset.objects.select_for_update().select_related('lab').get(asset_id=asset_id)
     if quantity <= 0:
         raise ValidationError("Quantity must be at least 1.")
     if asset.status in ['MAINTENANCE', 'LOST']:
@@ -223,18 +330,12 @@ def create_borrow_request(user: Any, asset_id, quantity: int = 1, borrow_reason:
 
 @transaction.atomic
 def approve_and_issue_request(transaction_id, issuer_user: Any, loan_days: int = 7) -> Transaction:
-    """
-    Strict Lab Assistant / Admin approval gate:
-    1. Blocks approval if borrow_reason is missing.
-    2. Autonomously deducts stock and updates Asset status under a row lock.
-    """
-    role = get_user_role(issuer_user)
-    if role not in ['ASSISTANT', 'ADMIN']:
-        raise PermissionDenied("Only Lab Assistants or Admins can approve borrow requests.")
+    tx = Transaction.objects.select_for_update().select_related('asset', 'asset__lab').get(
+        transaction_id=transaction_id
+    )
+    assert_lab_access(issuer_user, tx.asset.lab)
 
-    tx = Transaction.objects.select_for_update().select_related('asset').get(transaction_id=transaction_id)
     asset = Asset.objects.select_for_update().get(asset_id=tx.asset.asset_id)
-
     if tx.request_status != 'PENDING':
         raise ValidationError("Only PENDING requests can be approved.")
     if not tx.borrow_reason or len(tx.borrow_reason.strip()) < MIN_REASON_LENGTH:
@@ -244,7 +345,6 @@ def approve_and_issue_request(transaction_id, issuer_user: Any, loan_days: int =
     if asset.stock_quantity < tx.quantity:
         raise ValidationError(f"Insufficient stock. Requested: {tx.quantity}, Available: {asset.stock_quantity}.")
 
-    # Autonomous quantity & state transition
     asset.stock_quantity -= tx.quantity
     asset.status = 'ISSUED' if asset.stock_quantity == 0 else 'AVAILABLE'
     asset.save()
@@ -260,11 +360,11 @@ def approve_and_issue_request(transaction_id, issuer_user: Any, loan_days: int =
 
 @transaction.atomic
 def reject_borrow_request(transaction_id, issuer_user: Any, rejection_note: str = '') -> Transaction:
-    role = get_user_role(issuer_user)
-    if role not in ['ASSISTANT', 'ADMIN']:
-        raise PermissionDenied("Only Lab Assistants or Admins can reject borrow requests.")
+    tx = Transaction.objects.select_for_update().select_related('asset', 'asset__lab').get(
+        transaction_id=transaction_id
+    )
+    assert_lab_access(issuer_user, tx.asset.lab)
 
-    tx = Transaction.objects.select_for_update().get(transaction_id=transaction_id)
     if tx.request_status != 'PENDING':
         raise ValidationError("Only PENDING requests can be rejected.")
 
@@ -277,17 +377,12 @@ def reject_borrow_request(transaction_id, issuer_user: Any, rejection_note: str 
 
 @transaction.atomic
 def process_equipment_return(transaction_id, staff_user: Any, return_condition: str, notes: str = '') -> Transaction:
-    """
-    Autonomously restores stock, tracks overdue penalties, and opens a
-    MaintenanceLog ticket if returned DAMAGED or UNUSABLE.
-    """
-    role = get_user_role(staff_user)
-    if role not in ['ASSISTANT', 'ADMIN']:
-        raise PermissionDenied("Only Lab Assistants or Admins can log equipment returns.")
+    tx = Transaction.objects.select_for_update().select_related('asset', 'asset__lab', 'borrower').get(
+        transaction_id=transaction_id
+    )
+    assert_lab_access(staff_user, tx.asset.lab)
 
-    tx = Transaction.objects.select_for_update().select_related('asset', 'borrower').get(transaction_id=transaction_id)
     asset = Asset.objects.select_for_update().get(asset_id=tx.asset.asset_id)
-
     if tx.request_status != 'APPROVED':
         raise ValidationError("Only active (APPROVED) loans can be returned.")
 
@@ -297,11 +392,9 @@ def process_equipment_return(transaction_id, staff_user: Any, return_condition: 
     tx.request_status = 'RETURNED'
     tx.save()
 
-    # Autonomous overdue penalty tracking
     if tx.due_date and now > tx.due_date:
         UserProfile.objects.filter(user=tx.borrower).update(penalty_flags=F('penalty_flags') + 1)
 
-    # Autonomous stock restoration & maintenance routing (consumables don't return stock)
     if asset.asset_type != 'CONSUMABLE':
         asset.stock_quantity += tx.quantity
     asset.condition = return_condition
@@ -322,14 +415,10 @@ def process_equipment_return(transaction_id, staff_user: Any, return_condition: 
 
 
 # ==============================================================================
-# 4. STRICT TIME-SLOT MACHINE RESERVATIONS (1-2 HR ADVANCE + 30-MIN EXPIRY)
+# 5. STRICT TIME-SLOT MACHINE RESERVATIONS (LAB-SCOPED CHECK-IN)
 # ==============================================================================
 
 def expire_stale_reservations() -> int:
-    """
-    Autonomously expires ACTIVE reservations uncollected 30 minutes past start_time
-    and frees the machine back to AVAILABLE.
-    """
     cutoff = timezone.now() - timedelta(minutes=RESERVATION_EXPIRY_MINUTES)
     stale = Reservation.objects.select_related('asset').filter(
         status='ACTIVE',
@@ -350,13 +439,6 @@ def expire_stale_reservations() -> int:
 
 @transaction.atomic
 def create_time_slot_reservation(user: Any, asset_id, start_time, end_time, purpose: str = '') -> Reservation:
-    """
-    Strict machine slot booking:
-    - Must be booked between 1 and 2 hours in advance (prevents request overflow).
-    - Slot duration capped at 2 hours.
-    - Blocks overlapping bookings atomically.
-    - Auto-expires 30 minutes after start_time if user does not check in.
-    """
     expire_stale_reservations()
     now = timezone.now()
 
@@ -376,11 +458,9 @@ def create_time_slot_reservation(user: Any, asset_id, start_time, end_time, purp
     if asset.status in ['MAINTENANCE', 'LOST']:
         raise ValidationError(f"{asset.name} is currently {asset.status} and cannot be booked.")
 
-    # Prevent user from hoarding multiple active slots simultaneously
     if Reservation.objects.filter(user=user, status='ACTIVE', end_time__gt=now).exists():
         raise ValidationError("You already have an active machine reservation. Complete or cancel it first.")
 
-    # Overlap check: (existing_start < new_end) AND (existing_end > new_start)
     if Reservation.objects.filter(
         asset=asset, status='ACTIVE', start_time__lt=end_time, end_time__gt=start_time
     ).exists():
@@ -398,13 +478,12 @@ def create_time_slot_reservation(user: Any, asset_id, start_time, end_time, purp
 
 @transaction.atomic
 def checkin_reservation(reservation_id, staff_user: Any) -> Reservation:
-    """Marks a reservation as checked in so the 30-minute expiry timer stops."""
     expire_stale_reservations()
-    role = get_user_role(staff_user)
-    if role not in ['ASSISTANT', 'ADMIN']:
-        raise PermissionDenied("Only Lab Assistants or Admins can check in machine bookings.")
+    res = Reservation.objects.select_for_update().select_related('asset', 'asset__lab').get(
+        reservation_id=reservation_id
+    )
+    assert_lab_access(staff_user, res.asset.lab)
 
-    res = Reservation.objects.select_for_update().get(reservation_id=reservation_id)
     if res.status != 'ACTIVE':
         raise ValidationError(f"Cannot check in: reservation is {res.status}.")
 
@@ -413,12 +492,14 @@ def checkin_reservation(reservation_id, staff_user: Any) -> Reservation:
     res.save(update_fields=['checked_in_at', 'status'])
     return res
 
+
 @transaction.atomic
 def cancel_reservation(reservation_id, user: Any) -> Reservation:
-    res = Reservation.objects.select_for_update().select_related('asset', 'user').get(reservation_id=reservation_id)
-    role = get_user_role(user)
-    if res.user.pk != user.pk and role not in ['ASSISTANT', 'ADMIN']:
-        raise PermissionDenied("You can only cancel your own reservations.")
+    res = Reservation.objects.select_for_update().select_related('asset', 'asset__lab', 'user').get(
+        reservation_id=reservation_id
+    )
+    if res.user.pk != user.pk:
+        assert_lab_access(user, res.asset.lab)
     if res.status != 'ACTIVE':
         raise ValidationError(f"Cannot cancel a reservation that is already {res.status}.")
     res.status = 'CANCELLED'
@@ -429,28 +510,84 @@ def cancel_reservation(reservation_id, user: Any) -> Reservation:
     return res
 
 
+# ==============================================================================
+# 6. LAB CRUD, ASSET CRUD (LAB-SCOPED) & MAINTENANCE RESOLUTION
+# ==============================================================================
+
+@transaction.atomic
+def save_lab_record(staff_user: Any, data: dict) -> Lab:
+    role = get_user_role(staff_user)
+    if role not in ['FACULTY', 'ASSISTANT', 'ADMIN']:
+        raise PermissionDenied("Only Faculty, Lab Assistants, or Admins can manage laboratories.")
+
+    lab_name = (data.get('lab_name') or '').strip()
+    if not lab_name:
+        raise ValidationError("Laboratory name is required.")
+
+    lab_code = (data.get('lab_code') or '').strip().upper()
+    lab_type = data.get('lab_type') or 'COMPUTER_SCIENCE'
+    location = (data.get('location') or '').strip()
+    instructor_name = (data.get('instructor_name') or '').strip()
+    lab_id = data.get('lab_id')
+
+    if lab_id:
+        lab = Lab.objects.select_for_update().get(lab_id=lab_id)
+        if role == 'ASSISTANT':
+            assert_lab_access(staff_user, lab)
+        lab.lab_name = lab_name
+        if lab_code:
+            lab.lab_code = lab_code
+        lab.lab_type = lab_type
+        lab.location = location
+        lab.instructor_name = instructor_name
+        lab.save()
+        return lab
+
+    if not lab_code:
+        lab_code = ''.join(c for c in lab_name if c.isalnum()).upper()[:10] or 'GEN'
+
+    return Lab.objects.create(
+        lab_name=lab_name,
+        lab_code=lab_code,
+        lab_type=lab_type,
+        location=location,
+        instructor_name=instructor_name,
+        in_charge=staff_user,
+    )
+
+
+@transaction.atomic
+def delete_lab_record(lab_id, staff_user: Any) -> str:
+    role = get_user_role(staff_user)
+    if role not in ['FACULTY', 'ADMIN']:
+        raise PermissionDenied("Only Admins or Subject Faculty can delete a laboratory.")
+    lab = Lab.objects.select_for_update().get(lab_id=lab_id)
+    name = lab.lab_name
+    lab.delete()
+    return name
+
+
 @transaction.atomic
 def save_asset_record(staff_user: Any, data: dict) -> Asset:
-    """Creates or updates an Asset (Admin / Lab Assistant only)."""
     role = get_user_role(staff_user)
-    if role not in ['ASSISTANT', 'ADMIN']:
-        raise PermissionDenied("Only Admins or Lab Assistants can manage inventory records.")
+    if role not in ['FACULTY', 'ASSISTANT', 'ADMIN']:
+        raise PermissionDenied("Only Staff or Admins can add or edit equipment.")
 
     lab_id = data.get('lab_id')
-    lab_name = (data.get('lab_name') or '').strip()
-    if lab_id:
-        lab = Lab.objects.get(lab_id=lab_id)
-    elif lab_name:
-        clean_code = ''.join(c for c in lab_name if c.isalnum()).upper()[:8] or 'GEN'
-        lab, _ = Lab.objects.get_or_create(lab_name=lab_name, defaults={'lab_code': clean_code})
-    else:
+    if not lab_id:
         raise ValidationError("A laboratory must be selected.")
+    lab = Lab.objects.get(lab_id=lab_id)
+
+    if role == 'ASSISTANT':
+        assert_lab_access(staff_user, lab)
 
     qty = max(0, int(data.get('stock_quantity', 1)))
     asset_id = data.get('asset_id')
 
     if asset_id:
-        asset = Asset.objects.select_for_update().get(asset_id=asset_id)
+        asset = Asset.objects.select_for_update().select_related('lab').get(asset_id=asset_id)
+        if role == 'ASSISTANT':
+            assert_lab_access(staff_user, asset.lab)
         asset.name = (data.get('name') or asset.name).strip()
         asset.category = (data.get('category') or asset.category).strip()
         asset.asset_type = data.get('asset_type') or asset.asset_type
@@ -459,8 +596,18 @@ def save_asset_record(staff_user: Any, data: dict) -> Asset:
         if qty > asset.total_quantity:
             asset.total_quantity = qty
         asset.condition = data.get('condition') or asset.condition
+        if data.get('specifications'):
+            extras = dict(asset.extra_metadata or {})
+            extras['specifications'] = str(data.get('specifications')).strip()
+            asset.extra_metadata = extras
         asset.save()
         return asset
+
+    extras = {}
+    if data.get('specifications'):
+        extras['specifications'] = str(data.get('specifications')).strip()
+    if data.get('unit_cost'):
+        extras['unit_cost'] = str(data.get('unit_cost')).strip()
 
     return Asset.objects.create(
         name=(data.get('name') or '').strip(),
@@ -471,16 +618,30 @@ def save_asset_record(staff_user: Any, data: dict) -> Asset:
         stock_quantity=qty,
         total_quantity=max(1, qty),
         condition=data.get('condition') or 'GOOD',
-        extra_metadata={'notes': data.get('description', '')} if data.get('description') else {},
+        extra_metadata=extras,
     )
 
 
 @transaction.atomic
-def resolve_maintenance_ticket(ticket_id, staff_user: Any) -> MaintenanceLog:
+def delete_asset_record(asset_id, staff_user: Any) -> str:
     role = get_user_role(staff_user)
-    if role not in ['ASSISTANT', 'ADMIN']:
-        raise PermissionDenied("Only Admins or Lab Assistants can resolve maintenance tickets.")
-    ticket = MaintenanceLog.objects.select_for_update().select_related('asset').get(ticket_id=ticket_id)
+    if role not in ['FACULTY', 'ASSISTANT', 'ADMIN']:
+        raise PermissionDenied("Only Staff or Admins can delete equipment.")
+    asset = Asset.objects.select_for_update().select_related('lab').get(asset_id=asset_id)
+    if role == 'ASSISTANT':
+        assert_lab_access(staff_user, asset.lab)
+    tag = asset.asset_tag
+    asset.delete()
+    return tag
+
+
+@transaction.atomic
+def resolve_maintenance_ticket(ticket_id, staff_user: Any) -> MaintenanceLog:
+    ticket = MaintenanceLog.objects.select_for_update().select_related('asset', 'asset__lab').get(
+        ticket_id=ticket_id
+    )
+    assert_lab_access(staff_user, ticket.asset.lab)
+
     ticket.resolution_status = 'RESOLVED'
     ticket.resolved_at = timezone.now()
     ticket.save(update_fields=['resolution_status', 'resolved_at'])

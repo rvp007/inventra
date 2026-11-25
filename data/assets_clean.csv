@@ -1,0 +1,142 @@
+lab_code,name,category,asset_type,serial_number,stock_quantity,condition,specifications
+CSUB24,Desktop Workstation,Computing,SHARED,,84,GOOD,Intel Core i7-14700 (2.10GHz); 32GB RAM (31.7GB usable); 954GB storage; Windows 11 Pro Education N (25H2); System range UB02-GLAB-01 to UB02-GLAB-84
+CSUB34,Desktop Workstation,Computing,SHARED,,27,GOOD,Intel Core i5-14500 (2.60GHz); 16GB RAM (15.6GB usable); 476GB storage; Windows 11 Pro Education N (25H2); System range UB07-LAB-01 to UB07-LAB-27
+CSUB35,Desktop Workstation,Computing,SHARED,,35,GOOD,Intel Core i5-14500 (2.60GHz); 16GB RAM (3200 MT/s); 477GB storage; OS build 26200.8037; System range UB08-LAB-01 to UB08-LAB-35
+CSUB36,Desktop Workstation,Computing,SHARED,,28,GOOD,Intel Core i5-14500 (2.60GHz); 16GB RAM (3200 MT/s); 477GB storage; OS build 26200.8037; System range UB09-LAB-01 to UB09-LAB-28
+CSUB41,Desktop Workstation,Computing,SHARED,,28,GOOD,Intel Core i7-14700 (2.10GHz); 32GB RAM (31.7GB usable); 8GB graphics (multiple GPUs); 954GB storage (262GB used); Windows 11 Pro Education N (25H2); System range UB13-GLAB-01 to UB13-GLAB-028
+CSUB42,Desktop Workstation,Computing,SHARED,,28,GOOD,Intel Core i7-14500 (2.10GHz); 32GB RAM (31.7GB usable); 8GB graphics card; 954GB storage; Windows 11 Education (25H2); System range UB14-GLAB-001 to UB14-GLAB-028
+CSUB42,Microcontroller Kit,Electronics,SHARED,,10,GOOD,Used for Microcontroller Lab (Keil MDK) coursework
+CSUB43,Desktop Workstation,Computing,SHARED,,28,GOOD,Intel Core i5-14500 (2.60GHz); 16GB RAM (15.6GB usable); 476GB storage; Windows 11 Pro Education N (25H2); System range UB15-LAB-01 to UB15-LAB-28
+CSUB44,Desktop Workstation,Computing,SHARED,,35,GOOD,Intel Core i7-14700; 32GB RAM; 954GB storage; 8GB graphics card; Dual boot Windows 11 Pro Education N & Ubuntu 24.04.2 LTS; System range UB16-GLAB-01 to UB16-GLAB-35
+ELECANLG,Breadboard (840 Pin),Electronics,SHARED,,17,GOOD,
+ELECANLG,Oscilloscope (DSO),Measurement,SHARED,,10,GOOD,Digital Storage Oscilloscope
+ELECANLG,Multi-Output Power Supply,Measurement,SHARED,,18,GOOD,
+ELECANLG,"Function Generator (30MHz, Dual Output)",Measurement,SHARED,,10,GOOD,
+ELECANLG,"Function Generator (3MHz, Single Output)",Measurement,SHARED,,8,GOOD,
+ELECANLG,Multimeter,Measurement,SHARED,,10,GOOD,
+ELECANLG,Single Phase Watt and P.F. Meter,Measurement,SHARED,,12,GOOD,
+ELECANLG,Decade Resistance Box,Electronics,SHARED,,10,GOOD,
+ELECDIG,Digital IC Trainer Kit (16 Pin ZIP Socket),Electronics,SHARED,,10,GOOD,
+ELECDIG,Universal IC Tester (MME-UIT40),Electronics,SHARED,,1,GOOD,
+ELECDIG,28 Pin IC Trainer Kit,Electronics,SHARED,,1,GOOD,
+ELECBASIC,IoT Kit,Electronics,SHARED,,20,GOOD,Used for Arduino/ESP32/IoT/Robotics projects
+ELECBASIC,Soldering Machine,Electronics,SHARED,,10,GOOD,
+ELECBASIC,Sensors and Electronic Components (assorted lot),Electronics,CONSUMABLE,,1,GOOD,Mixed lot of sensors and small electronic components
+CHEM,Hydrochloric Acid (HCl),Chemicals,CONSUMABLE,,7,GOOD,500ml bottles
+CHEM,Sodium Hydroxide (NaOH),Chemicals,CONSUMABLE,,9,GOOD,500gm packs
+CHEM,Burette and Burette Stand Set,Glassware,SHARED,,35,GOOD,
+CHEM,Pipette (10ml),Glassware,SHARED,,38,GOOD,
+CHEM,Pipette Filler Bulb,Glassware,SHARED,,20,GOOD,
+CHEM,Conical Flask,Glassware,SHARED,,30,GOOD,
+CHEM,Beaker (250ml),Glassware,SHARED,,40,GOOD,
+CHEM,Potassium Permanganate,Chemicals,CONSUMABLE,,2,GOOD,500gm
+CHEM,Oxalic Acid,Chemicals,CONSUMABLE,,9,GOOD,
+CHEM,Sulphuric Acid,Chemicals,CONSUMABLE,,9,GOOD,500ml
+CHEM,Water Bath,Measurement,SHARED,,2,GOOD,
+CHEM,Magnesium Chloride,Chemicals,CONSUMABLE,,1,GOOD,500gm
+CHEM,Buffer Tablet (pH 9.2),Chemicals,CONSUMABLE,,2,GOOD,
+CHEM,Eriochrome Black-T,Chemicals,CONSUMABLE,,4,GOOD,125ml
+CHEM,EDTA,Chemicals,CONSUMABLE,,4,GOOD,100gm
+CHEM,Calorimeter,Measurement,SHARED,,5,GOOD,
+CHEM,Digital Thermometer,Measurement,SHARED,,10,GOOD,
+CHEM,Stopwatch,Measurement,SHARED,,20,GOOD,
+CHEM,Beaker (100ml),Glassware,SHARED,,35,GOOD,
+CHEM,Conductivity Meter (with Electrode),Measurement,SHARED,,6,GOOD,
+CHEM,Glass Rod,Glassware,SHARED,,200,GOOD,
+CHEM,pH Meter (with Electrode),Measurement,SHARED,,6,GOOD,
+CHEM,Potassium Dichromate,Chemicals,CONSUMABLE,,1,GOOD,
+CHEM,Ferrous Ammonium Sulfate (FAS),Chemicals,CONSUMABLE,,2,GOOD,
+CHEM,Potentiometer (with Electrode),Measurement,SHARED,,6,GOOD,
+CHEM,Aniline,Chemicals,CONSUMABLE,,2,GOOD,
+CHEM,Acetone,Chemicals,CONSUMABLE,,4,GOOD,
+CHEM,Ammonium Persulfate,Chemicals,CONSUMABLE,,1,GOOD,
+CHEM,Beaker (250ml & 100ml Set),Glassware,SHARED,,40,GOOD,Used for polymer preparation experiment
+PHYS,Melde's Apparatus,Physics Equipment,SHARED,,2,GOOD,
+PHYS,Simple Pendulum Setup,Physics Equipment,SHARED,,4,GOOD,
+PHYS,Spring Constant Setup,Physics Equipment,SHARED,,2,GOOD,
+PHYS,Ohm's Law Setup,Physics Equipment,SHARED,,2,GOOD,
+PHYS,Angle of Refraction Setup,Optics,SHARED,,2,GOOD,
+PHYS,Zener Diode Characteristics Setup,Physics Equipment,SHARED,,2,GOOD,
+PHYS,Capacitor Charging and Discharging Setup,Physics Equipment,SHARED,,2,GOOD,
+MECHMC1,CNC Wood Router Machine,Fabrication,TIME_SLOTTED,,1,GOOD,
+MECHMC1,Digital Impact Testing Machine,Fabrication,TIME_SLOTTED,,1,GOOD,
+MECHMC2,Laser Cutting Machine,Fabrication,TIME_SLOTTED,,1,GOOD,
+MECHMC2,Vinyl Cutter,Fabrication,TIME_SLOTTED,,1,GOOD,
+MECHFM,Rotameter,Measurement,SHARED,,1,GOOD,
+MECHFM,Reynolds Apparatus,Measurement,SHARED,,1,GOOD,
+MECHFM,Pitot Tube Setup,Measurement,SHARED,,1,GOOD,
+MECHFM,Bernoulli's Apparatus,Measurement,SHARED,,1,GOOD,
+MECHFM,Venturi and Orifice Meter,Measurement,SHARED,,1,GOOD,
+MECHFM,Major Loss Apparatus,Measurement,SHARED,,1,GOOD,
+MECHFM,Bulk Density Apparatus,Measurement,SHARED,,1,GOOD,
+MECHTH,Air Conditioning Test Rig,Fabrication,TIME_SLOTTED,,1,GOOD,
+MECHTH,Refrigerator Test Rig,Fabrication,TIME_SLOTTED,,1,GOOD,
+MECHTH,Port Timing Diagram Model,Measurement,SHARED,,1,GOOD,Demonstration/teaching model
+MECHTH,Valve Timing Diagram Model,Measurement,SHARED,,1,GOOD,Demonstration/teaching model
+MECHTH,Coil-on-Plug Ignition System Demo Unit,Measurement,SHARED,,1,GOOD,Demonstration/teaching model
+MECHTH,Four Stroke Four Cylinder Petrol Engine Test Rig,Fabrication,TIME_SLOTTED,,1,GOOD,
+MECHMT1,Digital Torsion Testing Machine,Fabrication,TIME_SLOTTED,,1,GOOD,
+MECHMT1,Creep Test Machine,Fabrication,TIME_SLOTTED,,1,GOOD,
+MECHMT1,Brinell and Rockwell Hardness Testing Machine,Fabrication,TIME_SLOTTED,,1,GOOD,
+MECHMT2,Universal Testing Machine (UTM),Fabrication,TIME_SLOTTED,,1,GOOD,
+MECHMT2,Fatigue Testing Machine,Fabrication,TIME_SLOTTED,,1,GOOD,
+MECHMT2,Muffle Furnace,Fabrication,TIME_SLOTTED,,1,GOOD,
+MECHMT2,Drilling Machine,Fabrication,TIME_SLOTTED,,1,GOOD,
+MECHMST,CNC Milling and Turning Machine,Fabrication,TIME_SLOTTED,,1,GOOD,
+MECHMST,TIG Welding Machine,Fabrication,TIME_SLOTTED,,1,GOOD,
+MECHMST,MIG Welding Machine,Fabrication,TIME_SLOTTED,,1,GOOD,
+MECHMST,Arc and Spot Welding Machine,Fabrication,TIME_SLOTTED,,1,GOOD,
+MECHMST,Brazing Welding Setup,Fabrication,TIME_SLOTTED,,1,GOOD,
+MECHMST,Power Hacksaw,Fabrication,TIME_SLOTTED,,1,GOOD,
+MECHMST,Shearing Machine,Fabrication,TIME_SLOTTED,,1,GOOD,
+MECHMST,Linear Measuring Instruments,Measurement,SHARED,,1,GOOD,
+MECHMST,Soldering Setup,Fabrication,SHARED,,1,GOOD,
+MECHCT,Electronic Weighing Scale (50kg capacity),Measurement,SHARED,,1,GOOD,
+MECHCT,Vicat Apparatus Setup,Measurement,SHARED,,1,GOOD,
+MECHCT,Le Chatelier Apparatus,Measurement,SHARED,,1,GOOD,
+MECHCT,Blaine Air Permeability Apparatus,Measurement,SHARED,,1,GOOD,
+MECHCT,Sieve Analysis Test Sieves - Fine Aggregates (Set),Measurement,SHARED,,1,GOOD,
+MECHCT,Sieve Analysis Test Sieves - Coarse Aggregates (Set),Measurement,SHARED,,1,GOOD,
+MECHCT,Slump Cone Test Apparatus,Measurement,SHARED,,1,GOOD,
+MECHCT,Compaction Factor Apparatus,Measurement,SHARED,,1,GOOD,
+MECHCT,Vee-Bee Consistometer Apparatus,Measurement,SHARED,,1,GOOD,
+MECHCT,Rebound Hammer Test Kit,Measurement,SHARED,,1,GOOD,
+MECHCT,Concrete Cube Mould (150mm x 150mm),Fabrication,SHARED,,30,GOOD,
+MECHCT,Cylindrical Mould (100mm x 200mm),Fabrication,SHARED,,12,GOOD,
+MECHGEO,"Electronic Weighing Scale (600g, 0.01g readability)",Measurement,SHARED,,1,GOOD,
+MECHGEO,Electronic Weighing Scale (3200g),Measurement,SHARED,,1,GOOD,
+MECHGEO,Digital Gyratory Sieve Shaker (fine sieve),Fabrication,TIME_SLOTTED,,1,GOOD,
+MECHGEO,Test Sieves Set - Fine Sieve Analysis,Measurement,SHARED,,1,GOOD,
+MECHGEO,Liquid Limit Device with Counter (Hand Operated),Measurement,SHARED,,1,GOOD,
+MECHGEO,Light Proctor Compaction Test Apparatus,Measurement,SHARED,,1,GOOD,
+MECHGEO,Modified (Heavy) Proctor Compaction Test Apparatus,Measurement,SHARED,,1,GOOD,
+MECHGEO,Sand Cone Apparatus,Measurement,SHARED,,1,GOOD,
+MECHGEO,"Core Cutter, Dolly and Rammer with Steel Rod (Set)",Measurement,SHARED,,1,GOOD,
+MECHGEO,"Direct Shear Apparatus (Motorized, Multiple Reversal Type)",Fabrication,TIME_SLOTTED,,1,GOOD,
+MECHGEO,"Unconfined Compression Tester (Motorized, Digital)",Fabrication,TIME_SLOTTED,,1,GOOD,
+MECHGEO,Consolidation Apparatus (Oedometer - Single Gang),Measurement,SHARED,,1,GOOD,
+MECHGEO,Triaxial Shear Test Apparatus,Fabrication,TIME_SLOTTED,,1,GOOD,"Includes Triaxial Cell and Triaxial Load Frame (5000kgf, Bench Type, Motorized, 3 Speeds)"
+MECHGEO,Permeability Apparatus,Measurement,SHARED,,1,GOOD,
+MECHGEO,Laboratory CBR Apparatus (Motorized),Fabrication,TIME_SLOTTED,,1,GOOD,
+MECHGEO,Sampling Auger - Post Hole Type,Measurement,SHARED,,5,GOOD,"Sizes: 150mm, 100mm, 75mm, 50mm, 38mm (1 each)"
+MECHGEO,Extension Rod (1m) for 150mm Auger,Measurement,SHARED,,1,GOOD,
+MECHGEO,Extension Rod (1m) for 100/75/50/38mm Augers,Measurement,SHARED,,1,GOOD,
+MECHGEO,Sampling Auger - Screw Type,Measurement,SHARED,,4,GOOD,"Screw type auger heads: 150mm, 100mm, 75mm, 50mm (1 each)"
+MECHGEO,Standard Penetration Test (SPT) Apparatus,Measurement,SHARED,,1,GOOD,Includes Split Spoon Sampler with Liner
+MECHGEO,Undisturbed Sampler,Measurement,SHARED,,3,GOOD,"Diameters: 50mm, 75mm, 100mm (1 each)"
+MECHSURV,Measuring Tape 30m (Fibre Tape),Measurement,SHARED,,2,GOOD,
+MECHSURV,"Ranging Rod (2m, 2-fold, socket type, canvas cover)",Measurement,SHARED,,10,GOOD,
+MECHSURV,Arrows (Heavy Gauge),Measurement,SHARED,,10,GOOD,
+MECHSURV,Wooden Pegs,Measurement,CONSUMABLE,,10,GOOD,
+MECHSURV,"Wooden Cross Staff (4"" with M.S Rod)",Measurement,SHARED,,2,GOOD,
+MECHSURV,"Prismatic Compass (4"" with Rigid Stand)",Measurement,SHARED,,2,GOOD,
+MECHSURV,Plane Table (600 x 750 x 15mm) with Aluminium Stand & Accessories,Measurement,SHARED,,1,GOOD,Heavy-duty
+MECHSURV,Pentax Total Station (Model V-102NL) with Stand & Accessories,Measurement,SHARED,,1,GOOD,
+MECHSURV,"Single Prism Assembly (Prism, Prism Holder, Range Pole)",Measurement,SHARED,,2,GOOD,
+MECHSURV,Auto Level Surveying Instrument with Tripod Stand and Levelling Staff,Measurement,SHARED,,1,GOOD,
+IDEA,CNC Simulator,Computing,SHARED,,1,GOOD,
+IDEA,3D Printer (FDM),Fabrication,TIME_SLOTTED,,1,GOOD,
+IDEA,3D Printer (SLA),Fabrication,TIME_SLOTTED,,1,GOOD,
+IDEA,Lathe cum Mini Milling Machine,Fabrication,TIME_SLOTTED,,1,GOOD,
+IDEA,Grinding Machine,Fabrication,TIME_SLOTTED,,1,GOOD,
+IDEA,PCB Milling Machine,Fabrication,TIME_SLOTTED,,1,GOOD,
