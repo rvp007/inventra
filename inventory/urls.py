@@ -7,6 +7,16 @@ urlpatterns = [
     # Public Labs (for Assistant OTP Registration dropdown)
     path('api/labs/public/', views.api_public_labs, name='api_public_labs'),
 
+    # QR Lookup (query-param safe + tag path)
+    path('api/qr/lookup/', views.api_qr_lookup, name='api_qr_lookup_query'),
+    path('api/qr/<str:asset_tag>/image/', views.api_qr_image, name='api_qr_image'),
+    path('api/qr/<str:asset_tag>/', views.api_qr_lookup, name='api_qr_lookup'),
+
+    # Borrow Cancel, Fault Reporting & User Profile
+    path('api/transactions/<uuid:transaction_id>/cancel/', views.api_cancel_transaction, name='api_cancel_transaction'),
+    path('api/maintenance/report/', views.api_report_fault, name='api_report_fault'),
+    path('api/users/<str:username>/profile/', views.api_user_profile, name='api_user_profile'),
+
     # Auth & College Email OTP
     path('api/auth/request-otp/', views.api_request_otp, name='api_request_otp'),
     path('api/auth/verify-otp/', views.api_verify_otp_register, name='api_verify_otp'),

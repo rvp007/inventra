@@ -374,6 +374,37 @@ def reject_borrow_request(transaction_id, issuer_user: Any, rejection_note: str 
     tx.save()
     return tx
 
+@transaction.atomic
+def cancel_borrow_request(transaction_id, user: Any) -> Transaction:
+    tx = Transaction.objects.select_for_update().select_related(
+        'asset', 'asset__lab', 'borrower'
+    ).get(transaction_id=transaction_id)
+
+    is_owner = tx.borrower.pk == user.pk
+    if not is_owner:
+        assert_lab_access(user, tx.asset.lab)
+
+    if tx.request_status == 'PENDING':
+        tx.request_status = 'CANCELLED'
+        tx.save(update_fields=['request_status'])
+        return tx
+
+    if tx.request_status == 'APPROVED':
+        if is_owner and get_user_role(user) not in ['ASSISTANT', 'ADMIN']:
+            raise PermissionDenied(
+                "Already-issued items must be returned or cancelled by the Lab Assistant."
+            )
+        asset = Asset.objects.select_for_update().get(asset_id=tx.asset.asset_id)
+        if asset.asset_type != 'CONSUMABLE':
+            asset.stock_quantity += tx.quantity
+        if asset.status != 'MAINTENANCE' and asset.stock_quantity > 0:
+            asset.status = 'AVAILABLE'
+        asset.save()
+        tx.request_status = 'CANCELLED'
+        tx.save(update_fields=['request_status'])
+        return tx
+
+    raise ValidationError(f"Cannot cancel a request that is already {tx.request_status}.")
 
 @transaction.atomic
 def process_equipment_return(transaction_id, staff_user: Any, return_condition: str, notes: str = '') -> Transaction:
@@ -455,6 +486,11 @@ def create_time_slot_reservation(user: Any, asset_id, start_time, end_time, purp
         raise ValidationError("Single booking duration cannot exceed 2 hours.")
 
     asset = Asset.objects.select_for_update().get(asset_id=asset_id)
+    if asset.asset_type != 'TIME_SLOTTED':
+        raise ValidationError(
+            "Machine slot booking is only available for time-slotted lab machines "
+            "(e.g., 3D Printers, Laser Cutters, CNC machines)."
+        )
     if asset.status in ['MAINTENANCE', 'LOST']:
         raise ValidationError(f"{asset.name} is currently {asset.status} and cannot be booked.")
 
@@ -543,6 +579,8 @@ def save_lab_record(staff_user: Any, data: dict) -> Lab:
         lab.save()
         return lab
 
+    if role == 'ASSISTANT':
+        raise PermissionDenied("Lab Assistants can only edit their assigned laboratory, not create new labs.")
     if not lab_code:
         lab_code = ''.join(c for c in lab_name if c.isalnum()).upper()[:10] or 'GEN'
 
@@ -584,8 +622,18 @@ def save_asset_record(staff_user: Any, data: dict) -> Asset:
     qty = max(0, int(data.get('stock_quantity', 1)))
     asset_id = data.get('asset_id')
 
+    clean_serial = (data.get('serial_number') or '').strip()
+    if clean_serial:
+        dup_qs = Asset.objects.filter(serial_number__iexact=clean_serial)
+        if asset_id:
+            dup_qs = dup_qs.exclude(asset_id=asset_id)
+        if dup_qs.exists():
+            raise ValidationError(f"Duplicate serial number '{clean_serial}'. Save rejected.")
+
     if asset_id:
         asset = Asset.objects.select_for_update().select_related('lab').get(asset_id=asset_id)
+        if clean_serial:
+            asset.serial_number = clean_serial
         if role == 'ASSISTANT':
             assert_lab_access(staff_user, asset.lab)
         asset.name = (data.get('name') or asset.name).strip()
@@ -650,4 +698,23 @@ def resolve_maintenance_ticket(ticket_id, staff_user: Any) -> MaintenanceLog:
     asset.condition = 'GOOD'
     asset.status = 'AVAILABLE' if asset.stock_quantity > 0 else 'ISSUED'
     asset.save()
+    return ticket
+
+@transaction.atomic
+def report_asset_fault(asset_id, user: Any, description: str, mark_maintenance: bool = False) -> MaintenanceLog:
+    clean_desc = (description or '').strip()
+    if len(clean_desc) < 5:
+        raise ValidationError("Please describe the fault in at least 5 characters.")
+
+    asset = Asset.objects.select_for_update().select_related('lab').get(asset_id=asset_id)
+    ticket = MaintenanceLog.objects.create(
+        asset=asset,
+        reported_by=user,
+        description=clean_desc,
+        resolution_status='OPEN',
+    )
+    if mark_maintenance and get_user_role(user) in ['FACULTY', 'ASSISTANT', 'ADMIN']:
+        asset.condition = 'DAMAGED'
+        asset.status = 'MAINTENANCE'
+        asset.save()
     return ticket

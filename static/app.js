@@ -719,11 +719,16 @@ function details() {
           </div>
           <hr>
           <div class="d-flex gap-2 flex-wrap">
-            <button class="btn btn-primary" onclick="openBorrowModal('${e.asset_id}')" ${e.status !== 'AVAILABLE' || e.stock_quantity < 1 ? 'disabled' : ''}>
-              <i class="bi bi-hand-index-thumb me-1"></i>Request to Borrow
-            </button>
-            <button class="btn btn-outline-primary" onclick="openReservationModal('${e.asset_id}')" ${e.status === 'MAINTENANCE' || e.status === 'LOST' ? 'disabled' : ''}>
-              <i class="bi bi-calendar-plus me-1"></i>Book Machine Slot (1–2 hr advance)
+            ${e.asset_type !== 'TIME_SLOTTED' ? `
+              <button class="btn btn-primary" onclick="openBorrowModal('${e.asset_id}')" ${e.status !== 'AVAILABLE' || e.stock_quantity < 1 ? 'disabled' : ''}>
+                <i class="bi bi-hand-index-thumb me-1"></i>Request to Borrow
+              </button>` : ''}
+            ${e.asset_type === 'TIME_SLOTTED' ? `
+              <button class="btn btn-primary" onclick="openReservationModal('${e.asset_id}')" ${e.status === 'MAINTENANCE' || e.status === 'LOST' ? 'disabled' : ''}>
+                <i class="bi bi-calendar-plus me-1"></i>Book Machine Slot (1–2 hr advance)
+              </button>` : ''}
+            <button class="btn btn-outline-danger" onclick="openReportFaultModal('${e.asset_id}')">
+              <i class="bi bi-exclamation-octagon me-1"></i>Report Fault
             </button>
           </div>
         </div>
@@ -790,26 +795,49 @@ function requests() {
 }
 
 function requestTable(items) {
+  const isStaff = ['ASSISTANT', 'ADMIN'].includes(currentUser?.role);
   return `
     <div class="table-responsive">
       <table class="table">
         <thead>
-          <tr><th>Unique ID</th><th>Borrower</th><th>Equipment &amp; Lab</th><th>Mandatory Reason</th><th>Qty</th><th>Due Date</th><th>Status</th></tr>
+          <tr><th>Unique ID</th><th>Borrower</th><th>Equipment &amp; Lab</th><th>Mandatory Reason</th><th>Qty</th><th>Due Date</th><th>Status</th><th>Action</th></tr>
         </thead>
         <tbody>
-          ${items.map(r => `
-            <tr>
-              <td><code>${esc(r.asset_tag)}</code></td>
-              <td>${esc(r.borrower)}</td>
-              <td><strong>${esc(r.asset_name)}</strong><div class="small text-secondary">${esc(r.lab)}</div></td>
-              <td class="small">${esc(r.borrow_reason || '—')}</td>
-              <td>${r.quantity}</td>
-              <td class="small">${fmtDate(r.due_date)}</td>
-              <td>${statusBadge(r.request_status)}</td>
-            </tr>`).join('') || '<tr><td colspan="7" class="text-center py-4 text-secondary">No requests yet.</td></tr>'}
+          ${items.map(r => {
+            const canCancel = r.request_status === 'PENDING' || (isStaff && r.request_status === 'APPROVED');
+            const borrowerCell = isStaff
+              ? `<a href="#" class="fw-semibold text-decoration-none" onclick="openProfileModal('${esc(r.borrower_username)}');return false">${esc(r.borrower)}</a>`
+              : esc(r.borrower);
+            return `
+              <tr>
+                <td><code>${esc(r.asset_tag)}</code></td>
+                <td>${borrowerCell}</td>
+                <td><strong>${esc(r.asset_name)}</strong><div class="small text-secondary">${esc(r.lab)}</div></td>
+                <td class="small">${esc(r.borrow_reason || '—')}</td>
+                <td>${r.quantity}</td>
+                <td class="small">${fmtDate(r.due_date)}</td>
+                <td>${statusBadge(r.request_status)}</td>
+                <td>
+                  ${canCancel
+                    ? `<button class="btn btn-sm btn-outline-danger" onclick="cancelTx('${r.transaction_id}')">Cancel</button>`
+                    : '—'}
+                </td>
+              </tr>`;
+          }).join('') || '<tr><td colspan="8" class="text-center py-4 text-secondary">No requests yet.</td></tr>'}
         </tbody>
       </table>
     </div>`;
+}
+
+async function cancelTx(id) {
+  if (!confirm('Cancel this equipment request?')) return;
+  try {
+    const r = await api(`/api/transactions/${id}/cancel/`, { method: 'POST' });
+    toast(r.message);
+    await go(currentPage);
+  } catch (e) {
+    toast(e.message, true);
+  }
 }
 
 function approvals() {
@@ -1026,6 +1054,11 @@ function openReservationModal(preselectedAssetId = '') {
   }
   const startDef = new Date(Date.now() + 75 * 60000);
   const endDef = new Date(Date.now() + 135 * 60000);
+  const machines = allAssets.filter(a => a.asset_type === 'TIME_SLOTTED');
+  if (!machines.length) {
+    toast('No time-slotted machines (e.g., 3D Printer, Laser Cutter) are available to book.', true);
+    return;
+  }
 
   showModal('Book Machine Slot (Strict 1–2 Hr Advance)', `
     <div class="alert alert-info py-2 small">
@@ -1035,6 +1068,7 @@ function openReservationModal(preselectedAssetId = '') {
       <div class="mb-2">
         <label class="form-label">Equipment / Machine</label>
         <select name="asset_id" class="form-select" required>
+          ${machines.map(a => `<option value="${a.asset_id}" ${a.asset_id === preselectedAssetId ? 'selected' : ''}>[${esc(a.asset_tag)}] ${esc(a.name)} — ${esc(a.lab.lab_name)}</option>`).join('')}
           ${allAssets.map(a => `<option value="${a.asset_id}" ${a.asset_id === preselectedAssetId ? 'selected' : ''}>[${esc(a.asset_tag)}] ${esc(a.name)} — ${esc(a.lab.lab_name)}</option>`).join('')}
         </select>
       </div>
@@ -1209,6 +1243,10 @@ function openAssetModal(assetId = '') {
         <label class="form-label">Equipment Name</label>
         <input name="name" class="form-control" value="${esc(e.name)}" required>
       </div>
+      <div class="mb-2">
+        <label class="form-label">Serial Number (Optional — must be unique)</label>
+        <input name="serial_number" class="form-control" value="${esc(e.serial_number || '')}" placeholder="Leave blank to auto-assign asset tag">
+      </div>
       <div class="row g-2 mb-2">
         <div class="col-md-6">
           <label class="form-label">Category</label>
@@ -1298,24 +1336,125 @@ function openQrLookup() {
   showModal('QR / Unique ID Asset Lookup', `
     <form id="qrForm" class="mb-3">
       <div class="input-group">
-        <input id="qrInput" class="form-control" placeholder="Scan or type tag e.g. INV-CSUB44-0001" required>
+        <input id="qrInput" class="form-control" placeholder="Scan QR or type tag/serial e.g. INV-CSUB44-0001" required>
         <button class="btn btn-primary" type="submit">Lookup</button>
       </div>
     </form>
     <div id="qrResult"></div>`, () => {
     $('#qrForm').onsubmit = async ev => {
       ev.preventDefault();
-      const tag = $('#qrInput').value.trim();
+      const raw = $('#qrInput').value.trim();
       try {
-        const a = await api(`/api/qr/${encodeURIComponent(tag)}/`);
+        const a = await api(`/api/qr/lookup/?q=${encodeURIComponent(raw)}`);
+        // Ensure asset is available in state if user clicks Open Full Details
+        if (!findAsset(a.asset_id)) {
+          allAssets.push({
+            ...a,
+            lab: { lab_id: a.lab_id, lab_name: a.lab, lab_code: '' },
+          });
+        }
         $('#qrResult').innerHTML = `
           <div class="p-3 border rounded bg-light">
-            <div class="d-flex justify-content-between"><strong>${esc(a.name)}</strong>${statusBadge(a.status)}</div>
-            <div class="small text-secondary mt-1">${esc(a.lab)} · Stock: ${a.stock_quantity} · Condition: ${esc(a.condition)}</div>
+            <div class="d-flex justify-content-between align-items-center">
+              <strong>${esc(a.name)}</strong>${statusBadge(a.status)}
+            </div>
+            <div class="small text-secondary mt-1">
+              <code>${esc(a.asset_tag)}</code> · ${esc(a.lab)} · Stock: ${a.stock_quantity} · ${esc(a.condition)}
+            </div>
             ${a.current_borrower ? `<div class="small mt-1 text-primary">Currently borrowed by: <strong>${esc(a.current_borrower)}</strong></div>` : ''}
+            <button class="btn btn-sm btn-primary mt-2" onclick="hideModal();openDetails('${a.asset_id}')">
+              Open Full Equipment Details
+            </button>
           </div>`;
       } catch (err) {
         $('#qrResult').innerHTML = `<div class="alert alert-danger py-2 small">${esc(err.message)}</div>`;
+      }
+    };
+  });
+}
+
+async function openProfileModal(username = '') {
+  const target = username || currentUser?.username;
+  if (!target) return;
+  showModal('Student / Researcher Profile', '<div class="text-center py-3 text-secondary">Loading profile...</div>');
+  try {
+    const data = await api(`/api/users/${encodeURIComponent(target)}/profile/`);
+    const u = data.user;
+    const s = data.stats;
+    $('#modalContent .modal-body').innerHTML = `
+      <div class="d-flex align-items-center gap-3 mb-3">
+        <div class="avatar" style="width:48px;height:48px;font-size:1rem">${esc(initials(u.full_name))}</div>
+        <div>
+          <h5 class="mb-0">${esc(u.full_name)}</h5>
+          <div class="small text-secondary">${esc(u.email)} · ${esc(ROLE_LABELS[u.role] || u.role)}</div>
+        </div>
+      </div>
+      <div class="row g-2 mb-3">
+        <div class="col-6"><small class="text-secondary">Username</small><div class="fw-semibold">${esc(u.username)}</div></div>
+        <div class="col-6"><small class="text-secondary">Department</small><div class="fw-semibold">${esc(u.department || 'Not specified')}</div></div>
+        <div class="col-6"><small class="text-secondary">Assigned Lab</small><div class="fw-semibold">${esc(u.assigned_lab ? u.assigned_lab.lab_name : 'Campus-wide')}</div></div>
+        <div class="col-6"><small class="text-secondary">Penalty Flags</small><div class="fw-semibold">${u.penalty_flags}</div></div>
+      </div>
+      <div class="row g-2 text-center mb-3">
+        <div class="col-3"><div class="p-2 border rounded"><div class="fw-bold">${s.total_requests}</div><small class="text-secondary">Requests</small></div></div>
+        <div class="col-3"><div class="p-2 border rounded"><div class="fw-bold">${s.active_loans}</div><small class="text-secondary">Active</small></div></div>
+        <div class="col-3"><div class="p-2 border rounded"><div class="fw-bold">${s.returned_count}</div><small class="text-secondary">Returned</small></div></div>
+        <div class="col-3"><div class="p-2 border rounded"><div class="fw-bold">${s.active_reservations}</div><small class="text-secondary">Slots</small></div></div>
+      </div>
+      <h6 class="small text-uppercase text-secondary mb-2">Recent Activity</h6>
+      ${(data.recent_requests || []).slice(0, 4).map(r => `
+        <div class="d-flex justify-content-between align-items-center border-bottom py-1 small">
+          <span><strong>${esc(r.asset_name)}</strong> (${esc(r.lab)})</span>
+          ${statusBadge(r.request_status)}
+        </div>`).join('') || '<div class="small text-secondary">No borrow history yet.</div>'}
+    `;
+  } catch (err) {
+    $('#modalContent .modal-body').innerHTML = `<div class="alert alert-danger mb-0 small">${esc(err.message)}</div>`;
+  }
+}
+
+function openReportFaultModal(assetId) {
+  const e = findAsset(assetId);
+  if (!e) return;
+  const isStaff = ['FACULTY', 'ASSISTANT', 'ADMIN'].includes(currentUser?.role);
+  showModal(`Report Fault: ${esc(e.name)}`, `
+    <form id="faultForm">
+      <div class="mb-2">
+        <label class="form-label">Equipment</label>
+        <input class="form-control" value="${esc(e.asset_tag)} — ${esc(e.lab.lab_name)}" disabled>
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Fault Description <span class="text-danger">*</span></label>
+        <textarea name="description" class="form-control" rows="3" minlength="5" placeholder="Describe the issue clearly..." required></textarea>
+      </div>
+      ${isStaff ? `
+        <div class="form-check mb-3">
+          <input class="form-check-input" type="checkbox" name="mark_maintenance" id="markMaintCheck" checked>
+          <label class="form-check-label small" for="markMaintCheck">Immediately move equipment to Maintenance</label>
+        </div>` : ''}
+      <button class="btn btn-danger w-100" type="submit">Submit Fault Report</button>
+    </form>`, () => {
+    $('#faultForm').onsubmit = async ev => {
+      ev.preventDefault();
+      const btn = ev.target.querySelector('button[type="submit"]');
+      setBtnBusy(btn, true, 'Reporting...');
+      const fd = new FormData(ev.target);
+      try {
+        const res = await api('/api/maintenance/report/', {
+          method: 'POST',
+          body: {
+            asset_id: assetId,
+            description: fd.get('description'),
+            mark_maintenance: Boolean(fd.get('mark_maintenance')),
+          },
+        });
+        hideModal();
+        toast(res.message);
+        await refreshData();
+        renderPage();
+      } catch (err) {
+        toast(err.message, true);
+        setBtnBusy(btn, false);
       }
     };
   });
@@ -1524,6 +1663,10 @@ $('#togglePassword')?.addEventListener('click', () => {
 
 $('#mobileMenu')?.addEventListener('click', () => $('#sidebar')?.classList.toggle('open'));
 $('#topNotifications')?.addEventListener('click', () => go('notifications'));
+$('.top-user')?.addEventListener('click', () => openProfileModal());
+$('.user-mini')?.addEventListener('click', () => openProfileModal());
+if ($('.top-user')) $('.top-user').style.cursor = 'pointer';
+if ($('.user-mini')) $('.user-mini').style.cursor = 'pointer';
 
 // ==============================================================================
 // BOOTSTRAP APP ON PAGE LOAD

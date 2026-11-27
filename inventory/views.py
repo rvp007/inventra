@@ -20,6 +20,9 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
+from datetime import timedelta
+from django.db import IntegrityError
+from django.db.models import F, Count, Q
 
 from .models import Lab, Asset, Transaction, Reservation, MaintenanceLog
 from .services import (
@@ -34,6 +37,7 @@ from .services import (
     process_equipment_return,
     create_time_slot_reservation,
     checkin_reservation,
+    cancel_borrow_request,
     cancel_reservation,
     save_lab_record,
     delete_lab_record,
@@ -41,6 +45,7 @@ from .services import (
     delete_asset_record,
     resolve_maintenance_ticket,
     expire_stale_reservations,
+    report_asset_fault
 )
 from .ingestion import ingest_file_bytes, export_inventory_bytes
 
@@ -281,6 +286,7 @@ def api_dashboard(request):
     pending_qs = all_tx_qs.filter(request_status='PENDING')
     active_qs = all_tx_qs.filter(request_status='APPROVED')
     overdue_qs = active_qs.filter(due_date__lt=now)
+    due_soon_qs = active_qs.filter(due_date__gte=now, due_date__lte=now + timedelta(hours=24))
 
     notifications = []
     for tx in overdue_qs[:5]:
@@ -291,6 +297,17 @@ def api_dashboard(request):
             'icon': 'bi-clock-fill',
             'tone': 'red',
         })
+
+    for tx in due_soon_qs[:5]:
+        notifications.append({
+            'title': f'Due soon: {tx.asset.name} ({tx.asset.asset_tag})',
+            'detail': f'Return due before {tx.due_date.strftime("%d %b %Y, %I:%M %p")} · {tx.asset.lab.lab_name}.',
+            'time': 'Due reminder',
+            'icon': 'bi-alarm-fill',
+            'tone': 'amber',
+        })
+
+
     for a in low_stock_qs[:5]:
         notifications.append({
             'title': f'Low stock: {a.name}',
@@ -375,23 +392,50 @@ def api_universal_search(request):
 
 
 @require_http_methods(["GET"])
+def _resolve_qr_asset(raw_query: str):
+    q = (raw_query or '').strip()
+    if not q:
+        return None
+    # Extract asset tag if a full QR payload like "INVENTRA|INV-CHEM-0001|Name|Lab" was scanned
+    if '|' in q:
+        parts = [p.strip() for p in q.split('|') if p.strip()]
+        q = parts[1] if len(parts) >= 2 and parts[0].upper() == 'INVENTRA' else parts[0]
+
+    return Asset.objects.select_related('lab').filter(
+        Q(asset_tag__iexact=q) | Q(serial_number__iexact=q)
+    ).first()
+
+
+@require_http_methods(["GET"])
 @api_login_required()
-def api_qr_lookup(request, asset_tag):
-    asset = get_object_or_404(Asset.objects.select_related('lab'), asset_tag=asset_tag)
-    active_tx = Transaction.objects.filter(asset=asset, request_status='APPROVED').select_related('borrower').first()
+def api_qr_lookup(request, asset_tag=''):
+    raw = asset_tag or request.GET.get('q', '')
+    asset = _resolve_qr_asset(raw)
+    if not asset:
+        return JsonResponse(
+            {'error': f'No equipment found matching tag or serial "{raw}".'},
+            status=404,
+        )
+    active_tx = Transaction.objects.filter(
+        asset=asset, request_status='APPROVED'
+    ).select_related('borrower').first()
     return JsonResponse({
         'asset_id': str(asset.asset_id),
         'asset_tag': asset.asset_tag,
         'name': asset.name,
+        'category': asset.category,
+        'asset_type': asset.asset_type,
+        'serial_number': asset.serial_number,
         'lab': asset.lab.lab_name,
+        'lab_id': str(asset.lab.lab_id),
         'status': asset.status,
         'condition': asset.condition,
         'stock_quantity': asset.stock_quantity,
+        'total_quantity': asset.total_quantity,
         'qr_code_url': f'/api/qr/{asset.asset_tag}/image/',
         'extra_metadata': asset.extra_metadata,
         'current_borrower': active_tx.borrower.username if active_tx else None,
     })
-
 
 @require_http_methods(["GET"])
 def api_qr_image(request, asset_tag):
@@ -453,7 +497,7 @@ def api_save_asset(request):
         }, status=201)
     except PermissionDenied as e:
         return JsonResponse({'error': str(e)}, status=403)
-    except (ValidationError, Lab.DoesNotExist, Asset.DoesNotExist, ValueError) as e:
+    except (ValidationError, IntegrityError, Lab.DoesNotExist, Asset.DoesNotExist, ValueError) as e:
         return JsonResponse({'error': getattr(e, 'message', str(e))}, status=400)
 
 
@@ -670,3 +714,81 @@ def api_export_inventory(request):
     resp = HttpResponse(content, content_type=content_type)
     resp['Content-Disposition'] = f'attachment; filename="{filename}"'
     return resp
+
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+@api_login_required()
+def api_cancel_transaction(request, transaction_id):
+    try:
+        tx = cancel_borrow_request(transaction_id, request.user)
+        return JsonResponse({
+            'message': 'Request cancelled successfully!',
+            'request_status': tx.request_status,
+            'asset_status': tx.asset.status,
+            'stock_quantity': tx.asset.stock_quantity,
+        })
+    except PermissionDenied as e:
+        return JsonResponse({'error': str(e)}, status=403)
+    except (ValidationError, Transaction.DoesNotExist) as e:
+        return JsonResponse({'error': getattr(e, 'message', str(e))}, status=400)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+@api_login_required()
+def api_report_fault(request):
+    data = _json_body(request)
+    try:
+        ticket = report_asset_fault(
+            asset_id=data.get('asset_id'),
+            user=request.user,
+            description=data.get('description', ''),
+            mark_maintenance=bool(data.get('mark_maintenance', False)),
+        )
+        return JsonResponse({
+            'message': f'Fault ticket created for {ticket.asset.asset_tag}.',
+            'ticket_id': str(ticket.ticket_id),
+            'resolution_status': ticket.resolution_status,
+        }, status=201)
+    except (ValidationError, Asset.DoesNotExist) as e:
+        return JsonResponse({'error': getattr(e, 'message', str(e))}, status=400)
+
+
+@require_http_methods(["GET"])
+@api_login_required()
+def api_user_profile(request, username=''):
+    target_username = (username or '').strip() or request.user.username
+    requester_role = get_user_role(request.user)
+
+    if target_username != request.user.username and requester_role not in ['FACULTY', 'ASSISTANT', 'ADMIN']:
+        return JsonResponse({'error': 'Access denied. You can only view your own profile.'}, status=403)
+
+    target = get_object_or_404(User, username__iexact=target_username)
+    profile_data = _serialize_user(target)
+    tx_qs = Transaction.objects.filter(borrower=target).select_related('asset', 'asset__lab').order_by('-requested_at')
+    res_qs = Reservation.objects.filter(user=target).select_related('asset', 'asset__lab').order_by('-created_at')
+
+    return JsonResponse({
+        'user': profile_data,
+        'joined_at': target.date_joined.isoformat() if target.date_joined else None,
+        'stats': {
+            'total_requests': tx_qs.count(),
+            'active_loans': tx_qs.filter(request_status='APPROVED').count(),
+            'returned_count': tx_qs.filter(request_status='RETURNED').count(),
+            'active_reservations': res_qs.filter(status='ACTIVE').count(),
+        },
+        'recent_requests': [_serialize_tx(t) for t in tx_qs[:10]],
+        'recent_reservations': [
+            {
+                'reservation_id': str(r.reservation_id),
+                'asset_tag': r.asset.asset_tag,
+                'asset_name': r.asset.name,
+                'lab': r.asset.lab.lab_name,
+                'start_time': r.start_time.isoformat(),
+                'end_time': r.end_time.isoformat(),
+                'status': r.status,
+            } for r in res_qs[:10]
+        ],
+    })
